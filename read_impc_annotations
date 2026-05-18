@@ -1,0 +1,52 @@
+#' Read IMPC gene-to-phenotype annotations
+#'
+#' Reads the IMPC genotype-phenotype assertions file and extracts
+#' a simple gene-to-MP term mapping.
+#'
+#' @param path Path to genotype-phenotype-assertions-IMPC.csv.gz
+#' @return A data frame with columns gene and term_id
+#' @export
+read_impc_annotations <- function(path) {
+
+  df <- read.csv(
+    gzfile(path),
+    stringsAsFactors = FALSE
+  )
+
+  possible_gene_cols <- c(
+    "marker_symbol",
+    "gene_symbol",
+    "markerSymbol",
+    "marker.symbol"
+  )
+
+  possible_term_cols <- c(
+    "mp_term_id",
+    "ontology_term_id",
+    "mp_id",
+    "mpTermId",
+    "term_id"
+  )
+
+  gene_col <- possible_gene_cols[possible_gene_cols %in% names(df)][1]
+  term_col <- possible_term_cols[possible_term_cols %in% names(df)][1]
+
+  if (is.na(gene_col) || is.na(term_col)) {
+    stop(
+      paste0(
+        "Could not find expected gene or MP term columns.\n",
+        "Available columns are:\n",
+        paste(names(df), collapse = ", ")
+      )
+    )
+  }
+
+  out <- df[, c(gene_col, term_col)]
+  names(out) <- c("gene", "term_id")
+
+  out <- unique(out)
+  out <- out[!is.na(out$gene) & !is.na(out$term_id), ]
+  rownames(out) <- NULL
+
+  out
+}
