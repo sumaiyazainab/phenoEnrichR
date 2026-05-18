@@ -1,0 +1,315 @@
+#' Get all ancestors of a term
+#'
+#' Recursively finds all ancestor terms of a given term.
+#'
+#' @param term A single ontology term ID
+#' @param graph A named list mapping terms to their parents
+#' @param visited Internal argument to avoid infinite loops
+#' @return Character vector of ancestor term IDs, including the input term
+#' @export
+get_ancestors <- function(term, graph, visited = character()) {
+
+  if (is.na(term) || term %in% visited) {
+    return(character())
+  }
+
+  parents <- graph[[term]]
+
+  if (is.null(parents) || all(is.na(parents))) {
+    return(term)
+  }
+
+  parents <- parents[!is.na(parents)]
+
+  ancestor_list <- lapply(parents, function(parent) {
+    get_ancestors(parent, graph, visited = c(visited, term))
+  })
+
+  unique(c(term, unlist(ancestor_list)))
+}
+
+
+
+
+#' Compare enrichment under different universes
+#'
+#' Runs the same enrichment analysis using multiple background sets.
+#'
+#' @param genes Character vector of genes of interest
+#' @param annotations Annotation data frame
+#' @param term_info Term information data frame
+#' @param universes Named list of background gene vectors
+#' @param min_size Minimum term size
+#' @return Named list of enrichment result tables
+#' @export
+compare_universes <- function(genes,
+                              annotations,
+                              term_info,
+                              universes,
+                              min_size = 5) {
+
+  out <- lapply(names(universes), function(name) {
+    universe <- universes[[name]]
+
+    res <- run_fisher_enrichment(
+      genes = genes,
+      universe = universe,
+      annotations = annotations,
+      min_size = min_size
+    )
+
+    res <- add_term_names(res, term_info)
+    res$universe_name <- name
+    res
+  })
+
+  names(out) <- names(universes)
+  out
+}
+
+
+#' Summarise universe comparison results
+#'
+#' Creates a compact summary table for each background universe.
+#'
+#' @param universe_comparison Output from compare_universes()
+#' @return A summary data frame
+#' @export
+summarise_universe_comparison <- function(universe_comparison) {
+
+  summary_list <- lapply(names(universe_comparison), function(name) {
+    df <- universe_comparison[[name]]
+
+    data.frame(
+      universe_name = name,
+      n_terms = nrow(df),
+      n_significant_p05 = sum(df$p_value < 0.05, na.rm = TRUE),
+      n_significant_fdr10 = sum(df$padj < 0.10, na.rm = TRUE),
+      top_term = if (nrow(df) > 0) df$term_name[which.min(df$p_value)] else NA_character_,
+      top_p_value = if (nrow(df) > 0) min(df$p_value, na.rm = TRUE) else NA_real_,
+      stringsAsFactors = FALSE
+    )
+  })
+
+  do.call(rbind, summary_list)
+}
+
+
+
+#' Summarise method comparison results
+#'
+#' Creates a compact table comparing enrichment methods.
+#'
+#' @param comparison Output from compare_hpo_methods()
+#' @return A summary data frame
+#' @export
+summarise_method_comparison <- function(comparison) {
+
+  # Only keep the actual result tables
+  method_names <- c("flat", "propagated", "pruned")
+  method_names <- method_names[method_names %in% names(comparison)]
+
+  summary_list <- lapply(method_names, function(name) {
+    df <- comparison[[name]]
+
+    # Handle missing or empty results safely
+    if (is.null(df) || nrow(df) == 0 || !"p_value" %in% names(df)) {
+      return(data.frame(
+        method = name,
+        n_terms = 0,
+        n_significant_p05 = 0,
+        n_significant_fdr10 = 0,
+        top_term = NA_character_,
+        top_p_value = NA_real_,
+        stringsAsFactors = FALSE
+      ))
+    }
+
+    data.frame(
+      method = name,
+      n_terms = nrow(df),
+      n_significant_p05 = sum(df$p_value < 0.05, na.rm = TRUE),
+      n_significant_fdr10 = sum(df$padj < 0.10, na.rm = TRUE),
+      top_term = if ("term_name" %in% names(df)) {
+        df$term_name[which.min(df$p_value)]
+      } else {
+        df$term_id[which.min(df$p_value)]
+      },
+      top_p_value = min(df$p_value, na.rm = TRUE),
+      stringsAsFactors = FALSE
+    )
+  })
+
+  do.call(rbind, summary_list)
+}
+
+
+#' Compare HPO enrichment strategies
+#'
+#' Runs HPO enrichment with:
+#' 1. flat annotations
+#' 2. propagated annotations
+#' 3. propagated + simple pruning
+#'
+#' @param genes Character vector of genes of interest
+#' @param hpo_obo_path Path to hp.obo
+#' @param hpo_annotation_path Path to genes_to_phenotype.txt
+#' @param universe Optional background gene vector
+#' @param min_size Minimum number of genes per term
+#' @return A list with flat, propagated, and pruned results
+#' @export
+compare_hpo_methods <- function(genes,
+                                hpo_obo_path,
+                                hpo_annotation_path,
+                                universe = NULL,
+                                min_size = 5) {
+
+  # Read ontology and annotations
+  term_info <- parse_obo_terms(hpo_obo_path)
+  hpo_ann <- read_hpo_gene_annotations(hpo_annotation_path)
+  annotations <- prepare_hpo_annotations(hpo_ann)
+
+  # If no universe is supplied, use all annotated genes
+  if (is.null(universe)) {
+    universe <- unique(annotations$gene)
+  }
+
+  # Build ontology graph
+  graph <- build_hpo_graph(term_info)
+
+  # ----- 1. Flat analysis -----
+  flat_results <- run_fisher_enrichment(
+    genes = genes,
+    universe = universe,
+    annotations = annotations,
+    min_size = min_size
+  )
+  flat_results <- add_term_names(flat_results, term_info)
+
+  # ----- 2. Propagated analysis -----
+  annotations_prop <- propagate_hpo_annotations(annotations, graph)
+
+  prop_results <- run_fisher_enrichment(
+    genes = genes,
+    universe = universe,
+    annotations = annotations_prop,
+    min_size = min_size
+  )
+  prop_results <- add_term_names(prop_results, term_info)
+
+  # ----- 3. Pruned analysis -----
+  pruned_results <- elim_prune_enrichment(
+    genes = genes,
+    universe = universe,
+    annotations = annotations_prop,
+    term_info = term_info,
+    min_size = min_size,
+    alpha = 0.05
+  )
+
+  list(
+    term_info = term_info,
+    annotations = annotations,
+    annotations_prop = annotations_prop,
+    flat = flat_results,
+    propagated = prop_results,
+    pruned = pruned_results
+  )
+}
+
+
+
+#' Simple elim-style pruning enrichment
+#'
+#' Performs a simple hierarchy-aware pruning approach:
+#' if a child term is significant, its genes are removed from parent terms
+#' before parent testing.
+#'
+#' @param genes Character vector of genes of interest
+#' @param universe Character vector of background genes
+#' @param annotations Data frame with columns gene and term_id
+#' @param term_info Parsed ontology table from parse_obo_terms()
+#' @param min_size Minimum term size
+#' @param alpha P-value threshold for calling a child significant
+#' @return A data frame of pruned enrichment results
+#' @export
+elim_prune_enrichment <- function(genes,
+                                  universe,
+                                  annotations,
+                                  term_info,
+                                  min_size = 5,
+                                  alpha = 0.05) {
+
+  # Make a term -> parent map
+  parent_map <- split(term_info$parent_id, term_info$term_id)
+
+  # Make a parent -> child map
+  child_df <- term_info[!is.na(term_info$parent_id), c("term_id", "parent_id")]
+  children_map <- split(child_df$term_id, child_df$parent_id)
+
+  # Build initial term -> genes mapping
+  term2genes <- split(annotations$gene, annotations$term_id)
+  term2genes <- lapply(term2genes, unique)
+
+  # Keep only terms with enough genes
+  term2genes <- term2genes[lengths(term2genes) >= min_size]
+
+  # Sort terms by number of parents (deeper terms first, roughly)
+  term_depth_proxy <- sapply(names(term2genes), function(term) {
+    length(get_ancestors(term, parent_map))
+  })
+
+  ordered_terms <- names(sort(term_depth_proxy, decreasing = TRUE))
+
+  significant_terms <- character()
+  pruned_term2genes <- term2genes
+
+  results_list <- list()
+
+  for (term in ordered_terms) {
+
+    genes_with_term <- unique(pruned_term2genes[[term]])
+
+    if (length(genes_with_term) < min_size) next
+
+    a <- sum(genes %in% genes_with_term)
+    b <- sum(!(genes %in% genes_with_term))
+    c <- sum((universe %in% genes_with_term) & !(universe %in% genes))
+    d <- sum(!(universe %in% genes_with_term) & !(universe %in% genes))
+
+    mat <- matrix(c(a, b, c, d), nrow = 2, byrow = TRUE)
+    p_value <- fisher.test(mat)$p.value
+
+    results_list[[length(results_list) + 1]] <- data.frame(
+      term_id = term,
+      selected_with_term = a,
+      selected_without_term = b,
+      background_with_term = c,
+      background_without_term = d,
+      p_value = p_value,
+      stringsAsFactors = FALSE
+    )
+
+    # If significant, remove these genes from parent terms
+    if (!is.na(p_value) && p_value < alpha) {
+      significant_terms <- c(significant_terms, term)
+
+      parents <- parent_map[[term]]
+      parents <- parents[!is.na(parents)]
+
+      for (parent in parents) {
+        if (!is.null(pruned_term2genes[[parent]])) {
+          pruned_term2genes[[parent]] <- setdiff(pruned_term2genes[[parent]], genes_with_term)
+        }
+      }
+    }
+  }
+
+  results <- dplyr::bind_rows(results_list)
+  results$padj <- p.adjust(results$p_value, method = "BH")
+  results <- add_term_names(results, term_info)
+  results <- results[order(results$p_value), ]
+  rownames(results) <- NULL
+
+  results
+}
