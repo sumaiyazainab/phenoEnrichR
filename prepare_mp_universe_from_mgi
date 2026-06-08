@@ -1,0 +1,24 @@
+#' @return Data frame with gene and term_id.
+#' @export
+prepare_mp_universe_from_mgi <- function(orthologs,
+                                         mgi_annotations) {
+
+  merged <- merge(
+    orthologs,
+    mgi_annotations,
+    by = "mouse_mgi_id"
+  )
+
+  out <- data.frame(
+    gene = merged$human_gene,
+    term_id = merged$term_id,
+    mouse_gene = merged$mouse_gene,
+    mouse_mgi_id = merged$mouse_mgi_id,
+    stringsAsFactors = FALSE
+  )
+
+  out <- unique(out)
+  rownames(out) <- NULL
+
+  out
+}
