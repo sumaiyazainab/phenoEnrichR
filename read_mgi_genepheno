@@ -1,0 +1,38 @@
+#' Read MGI gene-to-MP phenotype annotations
+#'
+#' Reads MGI_GenePheno.rpt.txt and extracts MGI gene IDs and MP IDs.
+#'
+#' @param path Path to MGI_GenePheno.rpt.txt.
+#' @return Data frame with mouse_mgi_id and term_id.
+#' @export
+read_mgi_genepheno <- function(path) {
+
+  df <- read.delim(
+    path,
+    sep = "\t",
+    header = FALSE,
+    stringsAsFactors = FALSE,
+    quote = "",
+    fill = TRUE
+  )
+
+  # Based on MGI_GenePheno.rpt.txt:
+  # V5 = MP term ID
+  # V7 = marker MGI gene ID
+  out <- data.frame(
+    mouse_mgi_id = df[[7]],
+    term_id = df[[5]],
+    stringsAsFactors = FALSE
+  )
+
+  out <- unique(out)
+  out <- out[
+    !is.na(out$mouse_mgi_id) &
+      !is.na(out$term_id) &
+      grepl("^MGI:", out$mouse_mgi_id) &
+      grepl("^MP:", out$term_id),
+  ]
+
+  rownames(out) <- NULL
+  out
+}
