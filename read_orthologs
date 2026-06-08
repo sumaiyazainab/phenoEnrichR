@@ -1,0 +1,35 @@
+#' Read human-mouse one-to-one orthologues
+#'
+#' Reads a human-to-mouse orthologue table and standardises key columns.
+#'
+#' @param path Path to orthologue TSV file.
+#' @return Data frame with human_gene, human_id, mouse_gene, mouse_mgi_id.
+#' @export
+read_orthologs <- function(path) {
+
+  df <- read.delim(
+    path,
+    sep = "\t",
+    header = TRUE,
+    stringsAsFactors = FALSE,
+    check.names = FALSE
+  )
+
+  out <- data.frame(
+    human_gene = df[["Human Gene Symbol"]],
+    human_id = df[["Hgnc Acc Id"]],
+    mouse_gene = df[["Mouse Gene Symbol"]],
+    mouse_mgi_id = df[["Mgi Gene Acc Id"]],
+    stringsAsFactors = FALSE
+  )
+
+  out <- unique(out)
+  out <- out[
+    !is.na(out$human_gene) &
+      !is.na(out$mouse_gene) &
+      !is.na(out$mouse_mgi_id),
+  ]
+
+  rownames(out) <- NULL
+  out
+}
