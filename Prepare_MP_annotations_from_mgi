@@ -1,0 +1,38 @@
+#' Prepare MP annotations for human input genes using orthologues
+#'
+#' Converts human genes to mouse orthologues and joins mouse genes to MP terms.
+#'
+#' @param genes Human gene symbols supplied by the user.
+#' @param orthologs Output from read_orthologs().
+#' @param mgi_annotations Output from read_mgi_genepheno().
+#' @return Data frame with gene and term_id, where gene is the original human gene.
+#' @export
+prepare_mp_annotations_from_mgi <- function(genes,
+                                            orthologs,
+                                            mgi_annotations) {
+
+  genes <- unique(genes)
+
+  selected_orthologs <- orthologs[
+    orthologs$human_gene %in% genes,
+  ]
+
+  merged <- merge(
+    selected_orthologs,
+    mgi_annotations,
+    by = "mouse_mgi_id"
+  )
+
+  out <- data.frame(
+    gene = merged$human_gene,
+    term_id = merged$term_id,
+    mouse_gene = merged$mouse_gene,
+    mouse_mgi_id = merged$mouse_mgi_id,
+    stringsAsFactors = FALSE
+  )
+
+  out <- unique(out)
+  rownames(out) <- NULL
+
+  out
+}
