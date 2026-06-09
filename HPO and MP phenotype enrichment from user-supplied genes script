@@ -1,0 +1,661 @@
+# ============================================================
+# phenoEnrichR cleaned R scripts
+# Purpose: HPO and MP phenotype enrichment from user-supplied genes
+# Notes:
+# - Testing datasets are NOT hard-coded here.
+# - Users provide their own gene vector.
+# - HPO uses human gene-to-HPO annotations.
+# - MP maps human genes to mouse orthologues, then uses MGI MP annotations.
+# ============================================================
+
+# ------------------------------------------------------------
+# 01_read_obo.R
+# ------------------------------------------------------------
+
+#' Read an ontology OBO file
+#'
+#' Reads an ontology file as plain text. This is used before parsing HPO or MP.
+#'
+#' @param path Path to an OBO ontology file.
+#' @return Character vector containing all lines in the file.
+#' @export
+read_obo <- function(path) {
+  # Check the file exists before trying to read it.
+  if (!file.exists(path)) stop("OBO file does not exist: ", path)
+
+  # Read the ontology line by line.
+  lines <- readLines(path, warn = FALSE)
+
+  # Return the raw ontology text.
+  lines
+}
+
+# ------------------------------------------------------------
+# 02_parse_obo_terms.R
+# ------------------------------------------------------------
+
+#' Parse ontology terms from an OBO file
+#'
+#' Extracts term IDs, names, and parent IDs from HPO or MP ontology files.
+#'
+#' @param path Path to an OBO ontology file.
+#' @return Data frame with term_id, term_name, and parent_id.
+#' @export
+parse_obo_terms <- function(path) {
+  # Read ontology text.
+  lines <- read_obo(path)
+
+  # Find the start of each ontology term block.
+  term_starts <- which(lines == "[Term]")
+
+  # Store parsed term blocks.
+  results <- list()
+
+  # Loop through all term blocks.
+  for (i in seq_along(term_starts)) {
+    start <- term_starts[i]
+
+    # Define the end of this term block.
+    end <- if (i < length(term_starts)) term_starts[i + 1] - 1 else length(lines)
+
+    # Extract this block of text.
+    block <- lines[start:end]
+
+    # Extract ID, name, and parent lines.
+    id_line <- grep("^id: ", block, value = TRUE)
+    name_line <- grep("^name: ", block, value = TRUE)
+    parent_lines <- grep("^is_a: ", block, value = TRUE)
+
+    # Skip incomplete blocks.
+    if (length(id_line) == 0 || length(name_line) == 0) next
+
+    # Clean ID and name.
+    term_id <- sub("^id: ", "", id_line[1])
+    term_name <- sub("^name: ", "", name_line[1])
+
+    # If no parent exists, store NA.
+    if (length(parent_lines) == 0) {
+      results[[length(results) + 1]] <- data.frame(
+        term_id = term_id,
+        term_name = term_name,
+        parent_id = NA_character_,
+        stringsAsFactors = FALSE
+      )
+    } else {
+      # Parent line example: is_a: HP:0000001 ! All
+      parent_ids <- sub("^is_a: ", "", parent_lines)
+      parent_ids <- sub(" !.*$", "", parent_ids)
+
+      results[[length(results) + 1]] <- data.frame(
+        term_id = term_id,
+        term_name = term_name,
+        parent_id = parent_ids,
+        stringsAsFactors = FALSE
+      )
+    }
+  }
+
+  # Combine all terms into one data frame.
+  dplyr::bind_rows(results)
+}
+
+# ------------------------------------------------------------
+# 03_build_ontology_graph.R
+# ------------------------------------------------------------
+
+#' Build an ontology graph
+#'
+#' Converts parsed ontology terms into a term-to-parent list.
+#'
+#' @param term_info Data frame from parse_obo_terms().
+#' @return Named list where each term points to parent terms.
+#' @export
+build_ontology_graph <- function(term_info) {
+  # This graph is used to find ancestors and propagate annotations.
+  split(term_info$parent_id, term_info$term_id)
+}
+
+# Backwards-compatible name used by older scripts.
+build_hpo_graph <- build_ontology_graph
+
+# ------------------------------------------------------------
+# 04_get_ancestors.R
+# ------------------------------------------------------------
+
+#' Get ancestor terms for one ontology term
+#'
+#' Finds the term itself and all parent terms above it.
+#'
+#' @param term One ontology term ID.
+#' @param graph Named list from build_ontology_graph().
+#' @param visited Internal safety argument to avoid loops.
+#' @return Character vector of ancestor term IDs.
+#' @export
+get_ancestors <- function(term, graph, visited = character()) {
+  # Stop if the term is missing or already visited.
+  if (is.na(term) || term %in% visited) return(character())
+
+  # Get parents of this term.
+  parents <- graph[[term]]
+
+  # If no parents exist, return the term itself.
+  if (is.null(parents) || all(is.na(parents))) return(term)
+
+  # Remove missing parent entries.
+  parents <- parents[!is.na(parents)]
+
+  # Recursively collect ancestors above each parent.
+  ancestor_list <- lapply(parents, function(parent) {
+    get_ancestors(parent, graph, visited = c(visited, term))
+  })
+
+  # Return unique term + ancestors.
+  unique(c(term, unlist(ancestor_list)))
+}
+
+# ------------------------------------------------------------
+# 05_propagate_annotations.R
+# ------------------------------------------------------------
+
+#' Propagate annotations through ontology ancestors
+#'
+#' Expands direct gene-term annotations so genes are also linked to parent terms.
+#'
+#' @param annotations Data frame with gene and term_id.
+#' @param graph Ontology graph from build_ontology_graph().
+#' @return Expanded gene-to-term annotation table.
+#' @export
+propagate_annotations <- function(annotations, graph) {
+  # Keep the standard enrichment columns.
+  annotations <- annotations[, c("gene", "term_id")]
+  annotations$gene <- as.character(annotations$gene)
+  annotations$term_id <- as.character(annotations$term_id)
+
+  # Add ancestor terms for every gene-term pair.
+  expanded_list <- lapply(seq_len(nrow(annotations)), function(i) {
+    gene <- annotations$gene[i]
+    term <- annotations$term_id[i]
+    ancestors <- get_ancestors(term, graph)
+
+    data.frame(gene = gene, term_id = ancestors, stringsAsFactors = FALSE)
+  })
+
+  # Combine and remove duplicates.
+  expanded <- do.call(rbind, expanded_list)
+  unique(expanded)
+}
+
+# Backwards-compatible name used by older scripts.
+propagate_hpo_annotations <- propagate_annotations
+
+# ------------------------------------------------------------
+# 06_read_hpo_gene_annotations.R
+# ------------------------------------------------------------
+
+#' Read HPO gene-to-phenotype annotations
+#'
+#' Reads genes_to_phenotype.txt and keeps key HPO columns.
+#'
+#' @param path Path to genes_to_phenotype.txt.
+#' @return Data frame with gene_symbol, hpo_id, and hpo_name.
+#' @export
+read_hpo_gene_annotations <- function(path) {
+  # Check the file exists.
+  if (!file.exists(path)) stop("HPO annotation file does not exist: ", path)
+
+  # Read HPO annotation file.
+  df <- read.delim(path, header = TRUE, sep = "\t", stringsAsFactors = FALSE, quote = "")
+
+  # Keep useful columns only.
+  out <- df[, c("gene_symbol", "hpo_id", "hpo_name")]
+
+  # Remove duplicate rows.
+  unique(out)
+}
+
+# ------------------------------------------------------------
+# 07_prepare_hpo_annotations.R
+# ------------------------------------------------------------
+
+#' Prepare HPO annotations for enrichment
+#'
+#' Converts HPO annotation column names into gene and term_id.
+#'
+#' @param hpo_ann Output from read_hpo_gene_annotations().
+#' @return Data frame with gene and term_id.
+#' @export
+prepare_hpo_annotations <- function(hpo_ann) {
+  # Select gene symbol and HPO term ID.
+  out <- hpo_ann[, c("gene_symbol", "hpo_id")]
+
+  # Standardise column names for enrichment.
+  names(out) <- c("gene", "term_id")
+
+  # Remove duplicate annotations.
+  unique(out)
+}
+
+# ------------------------------------------------------------
+# 08_read_orthologs.R
+# ------------------------------------------------------------
+
+#' Read human-mouse one-to-one orthologues
+#'
+#' Standardises the orthologue file for MP enrichment.
+#'
+#' @param path Path to orthologue TSV file.
+#' @return Data frame with human_gene, human_id, mouse_gene, mouse_mgi_id.
+#' @export
+read_orthologs <- function(path) {
+  # Check the file exists.
+  if (!file.exists(path)) stop("Orthologue file does not exist: ", path)
+
+  # Read orthologue file.
+  df <- read.delim(path, sep = "\t", header = TRUE, stringsAsFactors = FALSE, check.names = FALSE)
+
+  # Standardise the columns based on your file structure.
+  out <- data.frame(
+    human_gene = rownames(df),
+    human_id = df[["Human Gene Symbol"]],
+    mouse_gene = df[["Mgi Gene Acc Id"]],
+    mouse_mgi_id = df[["Mouse Support Count Threshold"]],
+    stringsAsFactors = FALSE
+  )
+
+  # Keep valid MGI mappings only.
+  out <- unique(out)
+  out <- out[!is.na(out$human_gene) & !is.na(out$mouse_gene) & !is.na(out$mouse_mgi_id) & grepl("^MGI:", out$mouse_mgi_id), ]
+  rownames(out) <- NULL
+
+  out
+}
+
+# ------------------------------------------------------------
+# 09_read_mgi_genepheno.R
+# ------------------------------------------------------------
+
+#' Read MGI gene-to-MP phenotype annotations
+#'
+#' Extracts mouse MGI gene IDs and MP term IDs from MGI_GenePheno.rpt.txt.
+#'
+#' @param path Path to MGI_GenePheno.rpt.txt.
+#' @return Data frame with mouse_mgi_id and term_id.
+#' @export
+read_mgi_genepheno <- function(path) {
+  # Check the file exists.
+  if (!file.exists(path)) stop("MGI gene-phenotype file does not exist: ", path)
+
+  # Read the MGI report.
+  df <- read.delim(path, sep = "\t", header = FALSE, stringsAsFactors = FALSE, quote = "", fill = TRUE)
+
+  # In this file: column 7 = MGI gene ID, column 5 = MP term ID.
+  out <- data.frame(mouse_mgi_id = df[[7]], term_id = df[[5]], stringsAsFactors = FALSE)
+
+  # Keep valid IDs only.
+  out <- unique(out)
+  out <- out[!is.na(out$mouse_mgi_id) & !is.na(out$term_id) & grepl("^MGI:", out$mouse_mgi_id) & grepl("^MP:", out$term_id), ]
+  rownames(out) <- NULL
+
+  out
+}
+
+# ------------------------------------------------------------
+# 10_prepare_mp_universe_from_mgi.R
+# ------------------------------------------------------------
+
+#' Prepare MP annotation universe from MGI
+#'
+#' Joins orthologues to MGI annotations to create human gene -> MP term mappings.
+#'
+#' @param orthologs Output from read_orthologs().
+#' @param mgi_annotations Output from read_mgi_genepheno().
+#' @return Data frame with gene, term_id, mouse_gene, mouse_mgi_id.
+#' @export
+prepare_mp_universe_from_mgi <- function(orthologs, mgi_annotations) {
+  # Merge human-mouse orthologues with MGI MP annotations.
+  merged <- merge(orthologs, mgi_annotations, by = "mouse_mgi_id")
+
+  # Keep human gene as the main enrichment gene.
+  out <- data.frame(
+    gene = merged$human_gene,
+    term_id = merged$term_id,
+    mouse_gene = merged$mouse_gene,
+    mouse_mgi_id = merged$mouse_mgi_id,
+    stringsAsFactors = FALSE
+  )
+
+  # Remove duplicate gene-term rows.
+  out <- unique(out)
+  rownames(out) <- NULL
+
+  out
+}
+
+# ------------------------------------------------------------
+# 11_run_fisher_enrichment.R
+# ------------------------------------------------------------
+
+#' Run phenotype enrichment with Fisher's exact test
+#'
+#' Tests whether ontology terms are overrepresented in a user gene set.
+#'
+#' @param genes User-supplied genes.
+#' @param universe Background gene universe.
+#' @param annotations Data frame with gene and term_id.
+#' @param min_size Minimum number of genes per term.
+#' @return Enrichment result table.
+#' @export
+run_fisher_enrichment <- function(genes, universe, annotations, min_size = 1) {
+  # Standardise inputs.
+  genes <- unique(as.character(genes))
+  universe <- unique(as.character(universe))
+  annotations <- as.data.frame(annotations, stringsAsFactors = FALSE)
+
+  # Check required columns.
+  if (!all(c("gene", "term_id") %in% names(annotations))) stop("annotations must contain columns called gene and term_id")
+
+  # Keep valid annotations inside the universe.
+  annotations <- annotations[, c("gene", "term_id")]
+  annotations$gene <- as.character(annotations$gene)
+  annotations$term_id <- as.character(annotations$term_id)
+  annotations <- annotations[!is.na(annotations$gene) & !is.na(annotations$term_id) & annotations$gene %in% universe, ]
+
+  # Make term-to-gene mapping.
+  term2genes <- split(annotations$gene, annotations$term_id)
+  term2genes <- lapply(term2genes, unique)
+  term2genes <- term2genes[lengths(term2genes) >= min_size]
+
+  # Safely return empty table if there is nothing to test.
+  if (length(term2genes) == 0) {
+    return(data.frame(term_id = character(), selected_with_term = integer(), selected_without_term = integer(), background_with_term = integer(), background_without_term = integer(), p_value = numeric(), padj = numeric(), stringsAsFactors = FALSE))
+  }
+
+  # Run Fisher test per term.
+  results <- lapply(names(term2genes), function(term) {
+    genes_with_term <- unique(term2genes[[term]])
+    a <- sum(genes %in% genes_with_term)
+    b <- sum(!(genes %in% genes_with_term))
+    c <- sum((universe %in% genes_with_term) & !(universe %in% genes))
+    d <- sum(!(universe %in% genes_with_term) & !(universe %in% genes))
+    mat <- matrix(c(a, b, c, d), nrow = 2, byrow = TRUE)
+    p_value <- fisher.test(mat)$p.value
+
+    data.frame(term_id = term, selected_with_term = a, selected_without_term = b, background_with_term = c, background_without_term = d, p_value = p_value, stringsAsFactors = FALSE)
+  })
+
+  # Combine results and add FDR correction.
+  results <- dplyr::bind_rows(results)
+  results$padj <- p.adjust(results$p_value, method = "BH")
+  results <- results[order(results$p_value), ]
+  rownames(results) <- NULL
+
+  results
+}
+
+# ------------------------------------------------------------
+# 12_add_term_names.R
+# ------------------------------------------------------------
+
+#' Add readable ontology term names
+#'
+#' Adds term_name to enrichment results.
+#'
+#' @param results Enrichment result table.
+#' @param term_info Parsed ontology table.
+#' @return Results with term names added.
+#' @export
+add_term_names <- function(results, term_info) {
+  # Keep one name per term ID.
+  term_names <- unique(term_info[, c("term_id", "term_name")])
+
+  # Merge names onto results.
+  merge(results, term_names, by = "term_id", all.x = TRUE)
+}
+
+# ------------------------------------------------------------
+# 13_filter_results_basic.R
+# ------------------------------------------------------------
+
+#' Filter broad enrichment terms
+#'
+#' Removes very broad or unwanted ontology terms.
+#'
+#' @param results Enrichment results.
+#' @param exclude_terms Term names to remove.
+#' @param max_background Maximum background count allowed.
+#' @return Filtered results.
+#' @export
+filter_results_basic <- function(results, exclude_terms = c("Mode of inheritance", "Autosomal dominant inheritance", "Autosomal recessive inheritance", "mammalian phenotype"), max_background = Inf) {
+  # Copy results.
+  out <- results
+
+  # Remove named broad terms if available.
+  if ("term_name" %in% names(out)) out <- out[!(out$term_name %in% exclude_terms), ]
+
+  # Remove terms that are too broad in the background.
+  out <- out[out$background_with_term <= max_background, ]
+  rownames(out) <- NULL
+
+  out
+}
+
+# ------------------------------------------------------------
+# 14_run_hpo_enrichment.R
+# ------------------------------------------------------------
+
+#' Run HPO enrichment
+#'
+#' Complete HPO workflow from genes to enrichment results.
+#'
+#' @param genes Human gene symbols.
+#' @param hpo_obo_path Path to hp.obo.
+#' @param hpo_annotation_path Path to genes_to_phenotype.txt.
+#' @param universe Optional background genes.
+#' @param min_size Minimum genes per term.
+#' @param propagate Whether to propagate annotations to parent terms.
+#' @return HPO enrichment analysis object.
+#' @export
+run_hpo_enrichment <- function(genes, hpo_obo_path = "data-raw/hp.obo", hpo_annotation_path = "data-raw/genes_to_phenotype.txt", universe = NULL, min_size = 5, propagate = TRUE) {
+  # Parse ontology and read annotations.
+  term_info <- parse_obo_terms(hpo_obo_path)
+  hpo_ann <- read_hpo_gene_annotations(hpo_annotation_path)
+  annotations <- prepare_hpo_annotations(hpo_ann)
+
+  # Default universe is all HPO-annotated genes.
+  if (is.null(universe)) universe <- unique(annotations$gene)
+
+  # Propagate annotations if requested.
+  if (propagate) {
+    graph <- build_ontology_graph(term_info)
+    annotations_used <- propagate_annotations(annotations, graph)
+  } else {
+    annotations_used <- annotations
+  }
+
+  # Run enrichment and add readable names.
+  results <- run_fisher_enrichment(genes, universe, annotations_used, min_size)
+  results_named <- add_term_names(results, term_info)
+
+  # Return all useful outputs.
+  list(ontology = "HPO", term_info = term_info, annotations_raw = annotations, annotations_used = annotations_used, results = results, results_named = results_named)
+}
+
+# ------------------------------------------------------------
+# 15_run_mp_enrichment.R
+# ------------------------------------------------------------
+
+#' Run MP enrichment
+#'
+#' Maps human genes to mouse orthologues and tests MP phenotype enrichment.
+#'
+#' @param genes Human gene symbols.
+#' @param mp_obo_path Path to MP ontology file.
+#' @param ortholog_path Path to human-mouse orthologue file.
+#' @param mgi_genepheno_path Path to MGI_GenePheno.rpt.txt.
+#' @param universe Optional background genes.
+#' @param min_size Minimum genes per term.
+#' @param propagate Whether to propagate annotations to parent terms.
+#' @return MP enrichment analysis object.
+#' @export
+run_mp_enrichment <- function(genes, mp_obo_path = "data-raw/MPheno_OBO.ontology.txt", ortholog_path = "data-raw/One To one orthologs2026-06-08.tsv", mgi_genepheno_path = "data-raw/MGI_GenePheno.rpt.txt", universe = NULL, min_size = 5, propagate = TRUE) {
+  # Parse MP ontology.
+  mp_term_info <- parse_obo_terms(mp_obo_path)
+  mp_graph <- build_ontology_graph(mp_term_info)
+
+  # Read orthologues and MGI annotations.
+  orthologs <- read_orthologs(ortholog_path)
+  mgi_annotations <- read_mgi_genepheno(mgi_genepheno_path)
+
+  # Create human gene to MP term mapping.
+  annotations_all <- prepare_mp_universe_from_mgi(orthologs, mgi_annotations)
+  annotations_for_enrichment <- annotations_all[, c("gene", "term_id")]
+
+  # Default universe is all human genes with mouse MP mappings.
+  if (is.null(universe)) universe <- unique(annotations_for_enrichment$gene)
+
+  # Propagate MP annotations if requested.
+  if (propagate) {
+    annotations_used <- propagate_annotations(annotations_for_enrichment, mp_graph)
+  } else {
+    annotations_used <- annotations_for_enrichment
+  }
+
+  # Run enrichment and add readable MP names.
+  results <- run_fisher_enrichment(genes, universe, annotations_used, min_size)
+  results_named <- add_term_names(results, mp_term_info)
+
+  # Record which input genes had mouse orthologues.
+  mapped_input <- orthologs[orthologs$human_gene %in% genes, ]
+
+  # Return all useful outputs.
+  list(ontology = "MP", mp_term_info = mp_term_info, orthologs = orthologs, mapped_input = mapped_input, mgi_annotations = mgi_annotations, annotations_all = annotations_all, annotations_used = annotations_used, results = results, results_named = results_named)
+}
+
+# ------------------------------------------------------------
+# 16_run_pheno_enrichment.R
+# ------------------------------------------------------------
+
+#' Run HPO, MP, or both phenotype enrichment analyses
+#'
+#' Main user-facing command for the package.
+#'
+#' @param genes Human gene symbols supplied by the user.
+#' @param ontology One of HPO, MP, or both.
+#' @param universe Optional background gene universe.
+#' @param min_size Minimum genes per term.
+#' @param propagate Whether to propagate annotations to parent terms.
+#' @return List containing requested enrichment analyses.
+#' @export
+run_pheno_enrichment <- function(genes, ontology = c("HPO", "MP", "both"), universe = NULL, min_size = 5, propagate = TRUE, hpo_obo_path = "data-raw/hp.obo", hpo_annotation_path = "data-raw/genes_to_phenotype.txt", mp_obo_path = "data-raw/MPheno_OBO.ontology.txt", ortholog_path = "data-raw/One To one orthologs2026-06-08.tsv", mgi_genepheno_path = "data-raw/MGI_GenePheno.rpt.txt") {
+  # Match ontology choice safely.
+  ontology <- match.arg(ontology)
+
+  # Store results here.
+  output <- list()
+
+  # Run HPO if requested.
+  if (ontology %in% c("HPO", "both")) {
+    output$HPO <- run_hpo_enrichment(genes, hpo_obo_path, hpo_annotation_path, universe, min_size, propagate)
+  }
+
+  # Run MP if requested.
+  if (ontology %in% c("MP", "both")) {
+    output$MP <- run_mp_enrichment(genes, mp_obo_path, ortholog_path, mgi_genepheno_path, universe, min_size, propagate)
+  }
+
+  output
+}
+
+# ------------------------------------------------------------
+# 17_make_results_table.R
+# ------------------------------------------------------------
+
+#' Make a clean enrichment table
+#'
+#' Converts raw results into a supervisor/report-ready table.
+#'
+#' @param results Enrichment results with term names.
+#' @param n Number of terms to keep.
+#' @return Clean results table.
+#' @export
+make_results_table <- function(results, n = 20) {
+  # Sort by adjusted p-value and keep top results.
+  results <- results[order(results$padj), ]
+  results <- head(results, n)
+
+  # Calculate gene ratio.
+  results$gene_ratio <- results$selected_with_term / (results$selected_with_term + results$selected_without_term)
+
+  # Build clean table.
+  data.frame(
+    Phenotype = results$term_name,
+    Term_ID = results$term_id,
+    Input_genes = results$selected_with_term,
+    Gene_ratio = round(results$gene_ratio, 3),
+    Background_genes = results$background_with_term,
+    P_value = signif(results$p_value, 3),
+    Adjusted_P_value = signif(results$padj, 3),
+    stringsAsFactors = FALSE
+  )
+}
+
+# ------------------------------------------------------------
+# 18_plot_enrichment.R
+# ------------------------------------------------------------
+
+#' Plot enriched phenotype terms as a bar plot
+#'
+#' @param results Enrichment results.
+#' @param n Number of top terms.
+#' @param use_adjusted Whether to use adjusted p-values.
+#' @return ggplot object.
+#' @export
+plot_enrichment <- function(results, n = 10, use_adjusted = TRUE) {
+  # Choose p-value column.
+  score_col <- if (use_adjusted) "padj" else "p_value"
+
+  # Prepare plotting data.
+  plot_df <- results[!is.na(results[[score_col]]) & results[[score_col]] > 0, ]
+  plot_df$score <- -log10(plot_df[[score_col]])
+  plot_df <- head(plot_df[order(-plot_df$score), ], n)
+  if (!"term_name" %in% names(plot_df)) plot_df$term_name <- plot_df$term_id
+
+  # Make horizontal bar plot.
+  ggplot2::ggplot(plot_df, ggplot2::aes(x = reorder(term_name, score), y = score)) +
+    ggplot2::geom_col() +
+    ggplot2::coord_flip() +
+    ggplot2::labs(title = "Top enriched phenotype terms", x = "Phenotype term", y = if (use_adjusted) "-log10(adjusted p-value)" else "-log10(p-value)") +
+    ggplot2::theme_minimal()
+}
+
+# ------------------------------------------------------------
+# 19_plot_enrichment_bubble.R
+# ------------------------------------------------------------
+
+#' Plot enriched phenotype terms as a bubble plot
+#'
+#' @param results Enrichment results.
+#' @param n Number of top terms.
+#' @param use_adjusted Whether to use adjusted p-values.
+#' @param label_threshold Label terms above this -log10 value.
+#' @return ggplot object.
+#' @export
+plot_enrichment_bubble <- function(results, n = 20, use_adjusted = TRUE, label_threshold = 1.3) {
+  # Choose p-value column.
+  p_col <- if (use_adjusted) "padj" else "p_value"
+
+  # Prepare plotting data.
+  plot_df <- results[!is.na(results[[p_col]]) & results[[p_col]] > 0, ]
+  plot_df$neg_log_p <- -log10(plot_df[[p_col]])
+  plot_df$gene_ratio <- plot_df$selected_with_term / (plot_df$selected_with_term + plot_df$selected_without_term)
+  if (!"term_name" %in% names(plot_df)) plot_df$term_name <- plot_df$term_id
+  plot_df <- head(plot_df[order(-plot_df$neg_log_p), ], n)
+  plot_df$label_text <- ifelse(plot_df$neg_log_p >= label_threshold, plot_df$term_name, "")
+
+  # Make bubble plot.
+  ggplot2::ggplot(plot_df, ggplot2::aes(x = gene_ratio, y = neg_log_p, size = selected_with_term, label = label_text)) +
+    ggplot2::geom_point(alpha = 0.7) +
+    ggplot2::geom_text(check_overlap = TRUE, vjust = -0.8, size = 3) +
+    ggplot2::labs(title = "Phenotype enrichment bubble plot", x = "Gene ratio", y = if (use_adjusted) "-log10(adjusted p-value)" else "-log10(p-value)", size = "Input genes") +
+    ggplot2::theme_minimal()
+}
