@@ -8,3 +8,24 @@ Developing the statistical framework to perform the enrichment analysis, account
 Assessing the impact of different background sets, annotation sets, and ontology pruning approaches on the enrichment analysis.
 Developing a set of visualisations to represent the results of the enrichment analysis.
 Potentially deploying a Shiny-based graphical interface for the R package.
+
+phenoEnrichR was developed to facilitate phenotype enrichment analysis using both human and mouse phenotype ontologies. The package enables researchers to investigate whether a set of genes is significantly associated with particular phenotypic abnormalities, providing biological context for experimental or computational gene lists.
+
+The workflow supports:
+
+HPO Enrichment Analysis
+Uses Human Phenotype Ontology (HPO) annotations.
+Identifies enriched human disease phenotypes associated with the input genes.
+MP Enrichment Analysis
+Maps human genes to high-confidence mouse orthologues.
+Uses Mouse Genome Informatics (MGI) phenotype annotations.
+Identifies enriched mouse phenotypes that may provide functional insight into human disease genes.
+Ontology-Aware Analysis
+Parses ontology structures directly from OBO files.
+Propagates annotations through parent-child relationships.
+Supports comparison of ontology pruning and annotation propagation strategies.
+Visualisation and Reporting
+Enrichment summary tables.
+Bubble plots.
+Bar plots.
+Comparison of alternative background gene universes.
