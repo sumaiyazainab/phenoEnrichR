@@ -29,3 +29,35 @@ Enrichment summary tables.
 Bubble plots.
 Bar plots.
 Comparison of alternative background gene universes.
+
+
+This version intentionally supports two built-in workflows only:
+
+1. **HPO enrichment** using the HPO ontology and official HPO gene-to-phenotype annotations.
+2. **MP enrichment** using the MP ontology, one-to-one human-mouse orthologues, and MGI phenotype annotations.
+
+Users choose the ontology through `ontology = "HPO"` or `ontology = "MP"`. The package does not require IMPC files and does not accept custom annotation tables. This keeps the public workflow focused and reproducible.
+
+## HPO example
+
+```r
+fit <- run_pheno_enrichment(
+  genes = example_genes("cardiac"),
+  ontology = "HPO",
+  method = "parentchild",
+  hpo_obo_path = "data-raw/hp.obo",
+  hpo_annotation_path = "data-raw/genes_to_phenotype.txt"
+)
+```
+
+## MP example
+
+```r
+fit <- run_pheno_enrichment(
+  genes = example_genes("cardiac"),
+  ontology = "MP",
+  method = "parentchild",
+  mp_obo_path = "data-raw/MPheno_OBO.ontology.txt",
+  ortholog_path = "data-raw/One To one orthologs2026-06-08.tsv",
+  mgi_genepheno_path = "data-raw/MGI_GenePheno.rpt.txt"
+)
