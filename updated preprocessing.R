@@ -350,14 +350,81 @@ prepare_mp_universe_from_mgi <- function(orthologs, mgi_annotations) {
   prepare_mp_universe(orthologs, mgi_annotations)
 }
 
-#' Load the built-in annotation resource for the selected ontology
+#' Retrieve a processed package dataset
 #'
-#' HPO uses the official HPO gene-to-phenotype file. MP uses one-to-one
-#' human-mouse orthologues joined to MGI gene-to-MP annotations.
+#' Package users normally receive these objects through the installed
+#' phenoEnrichR package. During development, the function also checks the
+#' global environment so the scripts can be sourced and tested directly.
+#' @param name Dataset object name.
+#' @return The requested dataset.
+.get_package_dataset <- function(name) {
+  pkg <- "phenoEnrichR"
+
+  # Normal installed-package route: LazyData objects are available in the
+  # package namespace after library(phenoEnrichR).
+  if (pkg %in% loadedNamespaces()) {
+    ns <- asNamespace(pkg)
+    if (exists(name, envir = ns, inherits = FALSE)) {
+      return(get(name, envir = ns, inherits = FALSE))
+    }
+  }
+
+  # Development route: devtools::load_all() or manually loaded .rda objects.
+  if (exists(name, envir = .GlobalEnv, inherits = FALSE)) {
+    return(get(name, envir = .GlobalEnv, inherits = FALSE))
+  }
+
+  # Explicitly ask R's data loader as a final package-data attempt.
+  tmp <- new.env(parent = emptyenv())
+  suppressWarnings(utils::data(list = name, package = pkg, envir = tmp))
+  if (exists(name, envir = tmp, inherits = FALSE)) {
+    return(get(name, envir = tmp, inherits = FALSE))
+  }
+
+  stop(
+    "Processed package dataset '", name, "' is unavailable. ",
+    "The package developer must run data-raw/prepare_package_data.R ",
+    "before building or installing phenoEnrichR.",
+    call. = FALSE
+  )
+}
+
+#' Load the processed ontology resource
+#'
+#' Uses package-safe processed data by default. A raw OBO path can still be
+#' supplied by the package developer for validation or updating resources.
 #' @param ontology HPO or MP.
-#' @param hpo_annotation_path HPO genes_to_phenotype file.
-#' @param ortholog_path Human-mouse one-to-one orthologue file.
-#' @param mgi_genepheno_path MGI gene-phenotype report.
+#' @param obo_path Optional raw OBO file override.
+#' @return Parsed ontology term table.
+load_default_ontology <- function(ontology, obo_path = NULL) {
+  ontology <- match.arg(toupper(ontology), c("HPO", "MP"))
+
+  if (!is.null(obo_path)) {
+    return(parse_obo_terms(obo_path))
+  }
+
+  object_name <- if (ontology == "HPO") "hpo_terms" else "mp_terms"
+  out <- .get_package_dataset(object_name)
+
+  required <- c("term_id", "term_name", "parent_id")
+  if (!all(required %in% names(out))) {
+    stop(object_name, " has an invalid format.", call. = FALSE)
+  }
+  out
+}
+
+#' Load the processed annotation resource
+#'
+#' HPO uses the processed official HPO gene-to-phenotype table. MP uses a
+#' processed human-gene-to-MP table created by joining one-to-one orthologues
+#' to MGI phenotype annotations.
+#'
+#' Raw file paths are optional developer overrides. Ordinary package users do
+#' not need to provide any paths.
+#' @param ontology HPO or MP.
+#' @param hpo_annotation_path Optional raw HPO annotation override.
+#' @param ortholog_path Optional raw orthologue override.
+#' @param mgi_genepheno_path Optional raw MGI annotation override.
 #' @return Standard gene/term_id annotation table.
 load_default_annotations <- function(ontology,
                                      hpo_annotation_path = NULL,
@@ -366,10 +433,38 @@ load_default_annotations <- function(ontology,
   ontology <- match.arg(toupper(ontology), c("HPO", "MP"))
 
   if (ontology == "HPO") {
-    return(read_hpo_gene_annotations(hpo_annotation_path))
+    if (!is.null(hpo_annotation_path)) {
+      return(read_hpo_gene_annotations(hpo_annotation_path))
+    }
+    return(.get_package_dataset("hpo_annotations"))
   }
 
-  orthologs <- read_orthologs(ortholog_path)
-  mgi_annotations <- read_mgi_genepheno(mgi_genepheno_path)
-  prepare_mp_universe(orthologs, mgi_annotations)
+  supplied <- c(!is.null(ortholog_path), !is.null(mgi_genepheno_path))
+  if (any(supplied) && !all(supplied)) {
+    stop(
+      "For a raw MP data override, supply both ortholog_path and ",
+      "mgi_genepheno_path.",
+      call. = FALSE
+    )
+  }
+
+  if (all(supplied)) {
+    orthologs <- read_orthologs(ortholog_path)
+    mgi_annotations <- read_mgi_genepheno(mgi_genepheno_path)
+    return(prepare_mp_universe(orthologs, mgi_annotations))
+  }
+
+  .get_package_dataset("mp_annotations")
 }
+
+#' Load processed one-to-one human-mouse orthologues
+#'
+#' This is primarily used to report MP mapping information. A raw path can be
+#' supplied during data-resource development.
+#' @param path Optional raw orthologue file override.
+#' @return Standard orthologue table.
+load_default_orthologs <- function(path = NULL) {
+  if (!is.null(path)) return(read_orthologs(path))
+  .get_package_dataset("human_mouse_orthologs")
+}
+
