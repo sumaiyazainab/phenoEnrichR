@@ -271,9 +271,10 @@ run_pheno_enrichment <- function(
   method <- match.arg(method)
   genes_supplied <- clean_gene_input(genes, gene_col = gene_col)
   obo_path <- if (ontology == "HPO") hpo_obo_path else mp_obo_path
-  .assert_file(obo_path, paste0(ontology, " ontology file"))
 
-  term_info <- parse_obo_terms(obo_path)
+  # Package users normally use processed ontology data stored in data/*.rda.
+  # A raw OBO path is only an optional developer override.
+  term_info <- load_default_ontology(ontology, obo_path = obo_path)
   graph <- build_ontology_graph(term_info)
   depth <- calculate_term_depth(graph)
 
@@ -301,6 +302,14 @@ run_pheno_enrichment <- function(
                                             overlap_threshold = prune_overlap)
   }
 
+  # For MP, retain a concise orthologue mapping summary using the processed
+  # package dataset. HPO does not require an orthologue step.
+  mapped_input <- NULL
+  if (ontology == "MP") {
+    orthologs_used <- load_default_orthologs(ortholog_path)
+    mapped_input <- orthologs_used[orthologs_used$human_gene %in% genes_supplied, , drop = FALSE]
+  }
+
   object <- list(
     ontology = ontology,
     method = method,
@@ -308,6 +317,8 @@ run_pheno_enrichment <- function(
     input_genes_supplied = genes_supplied,
     input_genes = genes_used,
     unmapped_input_genes = genes_unmapped,
+    mapped_input = mapped_input,
+    n_mapped_orthologs = if (is.null(mapped_input)) NA_integer_ else length(unique(mapped_input$human_gene)),
     n_input_supplied = length(genes_supplied),
     n_input_used = length(genes_used),
     universe = universe,
