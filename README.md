@@ -61,3 +61,35 @@ fit <- run_pheno_enrichment(
   ortholog_path = "data-raw/One To one orthologs2026-06-08.tsv",
   mgi_genepheno_path = "data-raw/MGI_GenePheno.rpt.txt"
 )
+
+
+
+
+
+## Implemented
+
+- HPO and MP choice through one main function.
+- Classic one-sided Fisher enrichment and BH FDR.
+- Parent-child conditional testing using the union of direct-parent genes.
+- Elim-style deepest-first testing that removes significant-child genes from ancestors.
+- Post-hoc ancestor/descendant redundancy pruning.
+- Custom background universes with explicit exclusion of genes outside the universe.
+- HPO annotations for human analysis and MGI annotations for mouse analysis.
+- Human-to-mouse one-to-one orthologue mapping.
+- Background and annotation-source comparison helpers.
+- Mapping summaries through print/summary methods.
+- Improved bar/bubble plots and overlapping-gene tables.
+- Example gene sets, output-format reference table, and versioned precomputation helper.
+- Input validation and testthat starter tests.
+
+## Important scientific note
+
+`topGO` is designed around Gene Ontology and GO identifiers. It is not a safe
+plug-and-play engine for HP:/MP: identifiers. This code therefore implements
+ontology-aware equivalents for HPO/MP and includes `run_topgo_control()` only
+for benchmarking genuine GO datasets.
+
+## Still requiring dissertation evaluation
+
+The code provides the mechanisms, but the dissertation still needs empirical
+comparisons across datasets, backgrounds, annotation releases, and pruning thresholds.
