@@ -468,3 +468,57 @@ load_default_orthologs <- function(path = NULL) {
   .get_package_dataset("human_mouse_orthologs")
 }
 
+#' Read the HGNC protein-coding gene resource
+#'
+#' Reads an HGNC complete-set style table and returns approved human gene
+#' symbols whose locus group is protein-coding or whose locus type is
+#' "gene with protein product".
+#' @param path Path to the HGNC tab-delimited file.
+#' @return A unique uppercase character vector of approved gene symbols.
+#' @export
+read_protein_coding_genes <- function(path) {
+  .assert_file(path, "HGNC protein-coding gene file")
+  x <- utils::read.delim(
+    path,
+    stringsAsFactors = FALSE,
+    check.names = FALSE,
+    quote = "",
+    comment.char = ""
+  )
+
+  required <- c("symbol", "status")
+  if (!all(required %in% names(x))) {
+    stop(
+      "The HGNC file must contain at least 'symbol' and 'status' columns.",
+      call. = FALSE
+    )
+  }
+
+  keep <- tolower(trimws(x$status)) == "approved"
+  if ("locus_group" %in% names(x)) {
+    keep <- keep & tolower(trimws(x$locus_group)) == "protein-coding gene"
+  } else if ("locus_type" %in% names(x)) {
+    keep <- keep & tolower(trimws(x$locus_type)) == "gene with protein product"
+  } else {
+    stop(
+      "The HGNC file must contain either 'locus_group' or 'locus_type'.",
+      call. = FALSE
+    )
+  }
+
+  genes <- standardise_gene_symbols(x$symbol[keep])
+  if (!length(genes)) {
+    stop("No approved protein-coding genes were found in the HGNC file.", call. = FALSE)
+  }
+  genes
+}
+
+#' Load the processed HGNC protein-coding reference universe
+#'
+#' @param path Optional raw HGNC file override for development.
+#' @return Character vector of approved human protein-coding gene symbols.
+load_default_protein_coding_genes <- function(path = NULL) {
+  if (!is.null(path)) return(read_protein_coding_genes(path))
+  genes <- .get_package_dataset("protein_coding_genes")
+  clean_gene_input(genes)
+}
