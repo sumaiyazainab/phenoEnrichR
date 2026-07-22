@@ -244,7 +244,7 @@ filter_results_basic <- function(results,
 #' @param genes User gene input.
 #' @param ontology HPO or MP.
 #' @param method fisher, parentchild, or elim.
-#' @param universe Optional background. Defaults to annotated genes.
+#' @param universe Optional background. Defaults to the bundled HGNC approved protein-coding genes.
 #' @param propagate Propagate annotations before testing.
 #' @param prune Apply post-test redundancy pruning.
 #' @param ... Resource paths and method options.
@@ -265,7 +265,8 @@ run_pheno_enrichment <- function(
     hpo_annotation_path = NULL,
     mp_obo_path = NULL,
     ortholog_path = NULL,
-    mgi_genepheno_path = NULL) {
+    mgi_genepheno_path = NULL,
+    protein_coding_path = NULL) {
 
   ontology <- match.arg(ontology)
   method <- match.arg(method)
@@ -287,8 +288,17 @@ run_pheno_enrichment <- function(
   annotations_direct <- validate_annotations(ann_full)
   annotations_used <- if (isTRUE(propagate)) propagate_annotations(annotations_direct, graph) else annotations_direct
 
-  if (is.null(universe)) universe <- unique(annotations_used$gene)
-  universe <- clean_gene_input(universe)
+  universe_source <- "user supplied"
+  if (is.null(universe)) {
+    universe <- load_default_protein_coding_genes(protein_coding_path)
+    universe_source <- "HGNC approved protein-coding genes"
+  }
+
+  # Only genes that can be tested need to remain in the statistical universe.
+  # This preserves the biological choice of a protein-coding reference while
+  # avoiding unannotated genes creating impossible contingency-table cells.
+  universe_requested <- clean_gene_input(universe)
+  universe <- intersect(universe_requested, unique(annotations_used$gene))
   genes_used <- intersect(genes_supplied, universe)
   genes_unmapped <- setdiff(genes_supplied, universe)
   if (!length(genes_used)) stop("None of the input genes were found in the annotation universe.", call. = FALSE)
@@ -299,7 +309,7 @@ run_pheno_enrichment <- function(
 
   if (isTRUE(prune)) {
     results_named <- prune_redundant_terms(results_named, annotations_used, graph,
-                                            overlap_threshold = prune_overlap)
+                                           overlap_threshold = prune_overlap)
   }
 
   # For MP, retain a concise orthologue mapping summary using the processed
@@ -322,7 +332,10 @@ run_pheno_enrichment <- function(
     n_input_supplied = length(genes_supplied),
     n_input_used = length(genes_used),
     universe = universe,
+    universe_requested = universe_requested,
+    universe_source = universe_source,
     universe_size = length(universe),
+    universe_requested_size = length(universe_requested),
     term_info = term_info,
     graph = graph,
     term_depth = depth,
@@ -350,7 +363,8 @@ print.pheno_enrichment <- function(x, ...) {
   cat("  Method:           ", x$method, "\n", sep = "")
   cat("  Annotation source:", x$annotation_source, "\n")
   cat("  Input genes:      ", x$n_input_used, "/", x$n_input_supplied, " mapped\n", sep = "")
-  cat("  Universe size:    ", x$universe_size, "\n", sep = "")
+  cat("  Universe:         ", x$universe_source, "\n", sep = "")
+  cat("  Testable universe:", x$universe_size, "/", x$universe_requested_size, " genes annotated\n", sep = "")
   cat("  Terms tested:     ", nrow(x$results), "\n", sep = "")
   cat("  Significant FDR<0.05: ", sig, "\n", sep = "")
   invisible(x)
@@ -365,6 +379,8 @@ summary.pheno_enrichment <- function(object, fdr_cutoff = 0.05, n = 10L, ...) {
     input_supplied = object$n_input_supplied,
     input_used = object$n_input_used,
     unmapped_genes = object$unmapped_input_genes,
+    universe_source = object$universe_source,
+    universe_requested_size = object$universe_requested_size,
     universe_size = object$universe_size,
     terms_tested = nrow(object$results),
     significant_terms = sum(object$results_named$padj <= fdr_cutoff, na.rm = TRUE),
@@ -512,3 +528,5 @@ build_precomputed_example <- function(output_path, genes = example_genes("cardia
   saveRDS(payload, output_path)
   invisible(payload)
 }
+
+
