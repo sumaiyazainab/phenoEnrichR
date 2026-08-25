@@ -528,5 +528,3 @@ build_precomputed_example <- function(output_path, genes = example_genes("cardia
   saveRDS(payload, output_path)
   invisible(payload)
 }
-
-
