@@ -240,59 +240,160 @@ read_hpo_gene_annotations <- function(path) {
 #' @param mouse_mgi_col Optional MGI ID column.
 #' @param human_gene_from_rownames Use row names for human symbols.
 #' @return Standard orthologue table.
+
 read_orthologs <- function(path,
                            human_gene_col = NULL,
                            mouse_gene_col = NULL,
                            mouse_mgi_col = NULL,
                            human_gene_from_rownames = NULL) {
+
   .assert_file(path, "Orthologue file")
-  df <- utils::read.delim(path, sep = "\t", header = TRUE, stringsAsFactors = FALSE,
-                          check.names = FALSE, row.names = NULL)
 
-  # Auto-detect the unusual project export.
-  shifted <- all(c("Human Gene Symbol", "Mgi Gene Acc Id", "Mouse Support Count Threshold") %in% names(df)) &&
-    mean(grepl("^HGNC:", df[["Human Gene Symbol"]]), na.rm = TRUE) > 0.5 &&
-    mean(grepl("^MGI:", df[["Mouse Support Count Threshold"]]), na.rm = TRUE) > 0.5
+  df <- utils::read.delim(
+    path,
+    sep = "\t",
+    header = TRUE,
+    stringsAsFactors = FALSE,
+    check.names = FALSE,
+    row.names = 1
+  )
 
-  if (is.null(human_gene_from_rownames)) human_gene_from_rownames <- shifted
+  # Auto-detect the shifted orthologue export used in this project.
+  shifted <- all(
+    c(
+      "Human Gene Symbol",
+      "Mgi Gene Acc Id",
+      "Mouse Support Count Threshold"
+    ) %in% names(df)
+  ) &&
+    mean(
+      grepl("^HGNC:", df[["Human Gene Symbol"]]),
+      na.rm = TRUE
+    ) > 0.5 &&
+    mean(
+      grepl("^MGI:", df[["Mouse Support Count Threshold"]]),
+      na.rm = TRUE
+    ) > 0.5
+
+  if (is.null(human_gene_from_rownames)) {
+    human_gene_from_rownames <- shifted
+  }
 
   if (shifted) {
-    # read.delim can use the first field as row names when rows contain one extra field.
+
+    # In the shifted export:
+    # row names = human gene symbol
+    # Human Gene Symbol column = HGNC ID
+    # Mgi Gene Acc Id column = mouse gene symbol
+    # Mouse Support Count Threshold = MGI ID
+
     human_gene <- rownames(df)
+    human_id <- df[["Human Gene Symbol"]]
     mouse_gene <- df[["Mgi Gene Acc Id"]]
     mouse_mgi <- df[["Mouse Support Count Threshold"]]
-    human_id <- df[["Human Gene Symbol"]]
+
   } else {
+
     pick <- function(requested, candidates, label) {
+
       if (!is.null(requested)) {
-        if (!requested %in% names(df)) stop(label, " column not found: ", requested, call. = FALSE)
+
+        if (!requested %in% names(df)) {
+          stop(
+            label,
+            " column not found: ",
+            requested,
+            call. = FALSE
+          )
+        }
+
         return(requested)
       }
+
       hit <- candidates[candidates %in% names(df)]
-      if (!length(hit)) stop("Could not identify ", label, " column. Supply it explicitly.", call. = FALSE)
+
+      if (!length(hit)) {
+        stop(
+          "Could not identify ",
+          label,
+          " column. Supply it explicitly.",
+          call. = FALSE
+        )
+      }
+
       hit[1]
     }
-    hg <- pick(human_gene_col, c("human_gene", "Human Gene Symbol", "human_gene_symbol"), "human gene")
-    mg <- pick(mouse_gene_col, c("mouse_gene", "Mouse Gene Symbol", "mouse_gene_symbol"), "mouse gene")
-    mi <- pick(mouse_mgi_col, c("mouse_mgi_id", "Mgi Gene Acc Id", "MGI ID"), "mouse MGI ID")
-    human_gene <- if (isTRUE(human_gene_from_rownames)) rownames(df) else df[[hg]]
+
+    hg <- pick(
+      human_gene_col,
+      c(
+        "human_gene",
+        "Human Gene Symbol",
+        "human_gene_symbol"
+      ),
+      "human gene"
+    )
+
+    mg <- pick(
+      mouse_gene_col,
+      c(
+        "mouse_gene",
+        "Mouse Gene Symbol",
+        "mouse_gene_symbol"
+      ),
+      "mouse gene"
+    )
+
+    mi <- pick(
+      mouse_mgi_col,
+      c(
+        "mouse_mgi_id",
+        "Mgi Gene Acc Id",
+        "MGI ID"
+      ),
+      "mouse MGI ID"
+    )
+
+    human_gene <- if (isTRUE(human_gene_from_rownames)) {
+      rownames(df)
+    } else {
+      df[[hg]]
+    }
+
     mouse_gene <- df[[mg]]
     mouse_mgi <- df[[mi]]
-    human_id <- if ("human_id" %in% names(df)) df$human_id else NA_character_
+
+    human_id <- if ("human_id" %in% names(df)) {
+      df$human_id
+    } else {
+      NA_character_
+    }
   }
 
   out <- data.frame(
-    human_gene = toupper(trimws(as.character(human_gene))),
+    human_gene = toupper(
+      trimws(as.character(human_gene))
+    ),
     human_id = as.character(human_id),
-    mouse_gene = trimws(as.character(mouse_gene)),
-    mouse_mgi_id = trimws(as.character(mouse_mgi)),
+    mouse_gene = trimws(
+      as.character(mouse_gene)
+    ),
+    mouse_mgi_id = trimws(
+      as.character(mouse_mgi)
+    ),
     stringsAsFactors = FALSE
   )
+
   out <- out[
-    !is.na(out$human_gene) & nzchar(out$human_gene) &
-      !is.na(out$mouse_gene) & nzchar(out$mouse_gene) &
-      grepl("^MGI:", out$mouse_mgi_id), , drop = FALSE
+    !is.na(out$human_gene) &
+      nzchar(out$human_gene) &
+      !is.na(out$mouse_gene) &
+      nzchar(out$mouse_gene) &
+      grepl("^MGI:", out$mouse_mgi_id),
+    ,
+    drop = FALSE
   ]
+
   unique(out)
 }
 
