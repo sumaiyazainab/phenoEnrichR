@@ -1,10 +1,253 @@
 # phenoEnrichR
-This project will develop an R package for enrichment analysis using Human and Mouse Phenotype Ontologies (HPO/MP). Given gene sets from RNA-seq or GWAS, it will identify overrepresented phenotypes, assess ontology/background effects, generate visualisations, and potentially include a Shiny interface for reproducible analysis.
 
-The aim of this project is to develop an R package that enables researchers to perform enrichment analysis using the Human Phenotype Ontology (HPO) and Mouse Phenotype (MP) ontologies. Given a set of genes identified through experimental or computational approaches such as RNA-seq experiments or GWAS studies, enrichment analysis of abnormal phenotypes described in mouse and humans will allow further characterisation of a gene set. This approach is similar to other widely implemented methods such as Gene Ontology and pathway enrichment analysis.
-Given a set of genes as input, the package will identify overrepresented phenotypic terms, providing summary statistics and visualizations to facilitate interpretation. The tool will integrate existing ontologies and gene-phenotype associations in a user-friendly and reproducible workflow, allowing users to explore potential gene-phenotype relationships efficiently.
-The project involves:
-Developing the statistical framework to perform the enrichment analysis, accounting for the hierarchical structure of the ontologies.
-Assessing the impact of different background sets, annotation sets, and ontology pruning approaches on the enrichment analysis.
-Developing a set of visualisations to represent the results of the enrichment analysis.
-Potentially deploying a Shiny-based graphical interface for the R package.
+Overview
+
+phenoEnrichR is an R project being developed into an R package for phenotype enrichment analysis. It enables researchers to identify phenotype terms that are significantly overrepresented within a user-supplied human gene set using either the Human Phenotype Ontology (HPO) or the Mammalian Phenotype Ontology (MP).
+
+The project is designed to provide a reproducible workflow for analysing phenotype enrichment and generating publication-ready summary tables and visualisations.
+
+Features
+Supports Human Phenotype Ontology (HPO)
+Supports Mammalian Phenotype Ontology (MP)
+Ontology-aware enrichment analysis
+Multiple enrichment methods:
+Fisher
+Parent-child
+Elim
+Automatic multiple-testing correction using the Benjamini–Hochberg procedure
+Summary tables of enriched phenotype terms
+Bar plot and bubble plot visualisations
+Analysis Workflow
+Input gene list
+       │
+       ▼
+Clean and validate input genes
+       │
+       ▼
+Select ontology
+(HPO or MP)
+       │
+       ▼
+Load ontology and phenotype annotations
+       │
+       ▼
+Perform enrichment analysis
+       │
+       ▼
+Adjust p-values (Benjamini–Hochberg)
+       │
+       ▼
+Generate enrichment results
+       │
+       ▼
+Visualise enriched phenotype terms
+Example Workflow
+Step 1 – Prepare a gene list
+
+Genes can be supplied as:
+
+matrix
+data frame
+CSV file
+TSV file
+
+Example:
+
+genes <- c(
+  "LMNA",
+  "DSP",
+  "MYH7",
+  "TTN",
+  "PKP2"
+)
+Step 2 – Run phenotype enrichment
+Human Phenotype Ontology
+result <- run_pheno_enrichment(
+    genes = genes,
+    ontology = "HPO",
+    method = "parentchild"
+)
+Mammalian Phenotype Ontology
+result <- run_pheno_enrichment(
+    genes = genes,
+    ontology = "MP",
+    method = "parentchild"
+)
+Step 3 – View the results
+
+Print a summary of the analysis:
+
+print(result)
+
+or
+
+summary(result)
+Step 4 – Generate a results table
+results_table <- make_results_table(result)
+
+The results table contains:
+
+phenotype name
+ontology ID
+odds ratio
+p-value
+adjusted p-value
+gene ratio
+overlapping genes
+Step 5 – Visualise the results
+Bar plot
+plot_enrichment(result)
+
+Displays the most significantly enriched phenotype terms.
+
+Bubble plot
+plot_enrichment_bubble(result)
+
+Displays enriched phenotype terms according to:
+
+statistical significance
+gene ratio
+number of input genes associated with each phenotype
+Supported Enrichment Methods
+Method	Description
+Fisher	Standard overrepresentation analysis using Fisher's Exact Test.
+Parent-child	Accounts for the ontology hierarchy by conditioning each term on its parent terms, reducing enrichment of broad parent phenotypes.
+Elim	Tests ontology terms from the most specific to the broadest, reducing redundancy by removing genes contributing to significant child terms before testing ancestor terms.
+Supported Ontologies
+Human Phenotype Ontology (HPO)
+
+Uses:
+
+Human genes
+HPO ontology
+Official HPO gene-to-phenotype annotations
+Mammalian Phenotype Ontology (MP)
+
+Uses:
+
+Human genes
+One-to-one human–mouse orthologues
+Mouse Genome Informatics (MGI) phenotype annotations
+Mammalian Phenotype Ontology
+Output
+
+The enrichment workflow returns a pheno_enrichment object containing:
+
+enrichment statistics
+mapped input genes
+enriched phenotype terms
+adjusted p-values
+ontology information
+summary statistics
+formatted results tables
+visualisations
+
+This project is currently being developed into an R package as part of an MSc research project. The core phenotype enrichment workflow has been implemented, including support for HPO and MP enrichment analyses, ontology-aware statistical methods, summary tables, and graphical visualisations.
+
+Overall Workflow
+1. User Input
+
+Human gene list or PanelApp gene panel.
+
+Example: LMNA, DSP, MYH7, TTN, PKP2
+
+↓
+
+2. Clean and Standardise Genes
+Read vector, table, CSV, or TSV
+Select gene column
+Remove missing and blank values
+Convert gene symbols to uppercase
+Remove duplicates
+
+↓
+
+3. Select Ontology Workflow
+
+Choose either the Human Phenotype Ontology (HPO) or Mammalian Phenotype Ontology (MP) workflow.
+
+HPO workflow:
+Human genes → HPO annotations
+
+MP workflow:
+Human genes → Mouse orthologues → MGI MP annotations
+
+↓
+
+4. Load Ontology Structure
+
+Load information describing the selected ontology:
+
+Term IDs
+Term names
+Parent–child relationships
+Ontology depth
+Ancestors of each term
+
+↓
+
+5. Propagate Annotations
+
+A gene annotated to a specific phenotype is also assigned to its broader ancestor terms.
+
+↓
+
+6. Define the Background Universe
+
+Default: approved HGNC protein-coding genes.
+
+Retain only genes with usable phenotype annotations in the selected workflow.
+
+↓
+
+7. Map the Input Genes
+
+Determine:
+
+Genes used in enrichment
+Genes excluded or unmapped
+For MP: human-to-mouse mapping summary
+
+↓
+
+8. Test Every Eligible Phenotype Term
+
+Choose one enrichment method:
+
+Fisher
+Parent–child
+Elim
+
+Minimum default term size: 5 genes
+
+↓
+
+9. Correct for Multiple Testing
+
+Apply the Benjamini–Hochberg procedure to calculate adjusted p-values.
+
+Phenotype terms are considered significant by default when FDR ≤ 0.05.
+
+↓
+
+10. Add Names and Optionally Prune Terms
+Convert ontology IDs to readable phenotype names
+Optionally remove highly redundant parent terms
+
+↓
+
+11. Return Results
+
+The workflow returns:
+
+Enrichment result object
+Summary
+Results table
+Enrichment bar plot
+Enrichment bubble plot
+GEL status plot
+GEL mapping plot
+
+
+<img width="468" height="642" alt="image" src="https://github.com/user-attachments/assets/0a3dbd6e-cffb-446f-b282-151a93137957" />
+
