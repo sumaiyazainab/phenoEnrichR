@@ -144,3 +144,121 @@ visualisations
 
 This project is currently being developed into an R package as part of an MSc research project. The core phenotype enrichment workflow has been implemented, including support for HPO and MP enrichment analyses, ontology-aware statistical methods, summary tables, and graphical visualisations.
 
+Overall workflow diagram
+┌───────────────────────────────────────────────┐
+│ 1. USER INPUT                                 │
+│                                               │
+│ Human gene list or PanelApp gene panel        │
+│ Example: LMNA, DSP, MYH7, TTN, PKP2           │
+└──────────────────────┬────────────────────────┘
+                       │
+                       ▼
+┌───────────────────────────────────────────────┐
+│ 2. CLEAN AND STANDARDISE GENES                │
+│                                               │
+│ • Read vector, table, CSV or TSV              │
+│ • Select gene column                          │
+│ • Remove missing and blank values             │
+│ • Convert symbols to uppercase                │
+│ • Remove duplicates                           │
+└──────────────────────┬────────────────────────┘
+                       │
+                       ▼
+┌───────────────────────────────────────────────┐
+│ 3. SELECT ONTOLOGY WORKFLOW                   │
+│                                               │
+│              HPO             MP               │
+│               │               │               │
+│ Human genes → HPO      Human genes            │
+│ annotations                  │                 │
+│                              ▼                 │
+│                     Mouse orthologues          │
+│                              │                 │
+│                              ▼                 │
+│                     MGI MP annotations         │
+└──────────────────────┬────────────────────────┘
+                       │
+                       ▼
+┌───────────────────────────────────────────────┐
+│ 4. LOAD ONTOLOGY STRUCTURE                    │
+│                                               │
+│ • Term IDs                                    │
+│ • Term names                                  │
+│ • Parent–child relationships                  │
+│ • Ontology depth                              │
+│ • Ancestors of each term                      │
+└──────────────────────┬────────────────────────┘
+                       │
+                       ▼
+┌───────────────────────────────────────────────┐
+│ 5. PROPAGATE ANNOTATIONS                      │
+│                                               │
+│ A gene annotated to a specific phenotype is   │
+│ also assigned to its broader ancestor terms.  │
+└──────────────────────┬────────────────────────┘
+                       │
+                       ▼
+
+
+┌───────────────────────────────────────────────┐
+│ 6. DEFINE THE BACKGROUND UNIVERSE             │
+│                                               │
+│ Default: approved HGNC protein-coding genes   │
+│                                               │
+│ Then retain only genes with usable phenotype  │
+│ annotations in the selected workflow.         │
+└──────────────────────┬────────────────────────┘
+                       │
+                       ▼
+┌───────────────────────────────────────────────┐
+│ 7. MAP THE INPUT GENES                        │
+│                                               │
+│ • Genes used in enrichment                    │
+│ • Genes excluded or unmapped                  │
+│ • For MP: human-to-mouse mapping summary      │
+└──────────────────────┬────────────────────────┘
+                       │
+                       ▼
+┌───────────────────────────────────────────────┐
+│ 8. TEST EVERY ELIGIBLE PHENOTYPE TERM         │
+│                                               │
+│ Choose one method:                            │
+│ • Fisher                                      │
+│ • Parent–child                                │
+│ • Elim                                        │
+│                                               │
+│ Minimum default term size: 5 genes            │
+└──────────────────────┬────────────────────────┘
+                       │
+                       ▼
+┌───────────────────────────────────────────────┐
+│ 9. CORRECT FOR MULTIPLE TESTING               │
+│                                               │
+│ Benjamini–Hochberg adjusted p-values          │
+│ Significant by default when FDR ≤ 0.05        │
+└──────────────────────┬────────────────────────┘
+                       │
+                       ▼
+┌───────────────────────────────────────────────┐
+│ 10. ADD NAMES AND OPTIONALLY PRUNE TERMS      │
+│                                               │
+│ • Convert IDs to readable phenotype names     │
+│ • Optionally remove highly redundant parents  │
+└──────────────────────┬────────────────────────┘
+                       │
+                       ▼
+┌───────────────────────────────────────────────┐
+│ 11. RETURN RESULTS                            │
+│                                               │
+│ • Enrichment result object                    │
+│ • Summary                                     │
+│ • Results table                               │
+│ • Enrichment bar plot                         │
+│ • Enrichment bubble plot                      │
+│ • GEL status plot                             │
+│ • GEL mapping plot                            │
+└───────────────────────────────────────────────┘
+
+
+<img width="468" height="642" alt="image" src="https://github.com/user-attachments/assets/0a3dbd6e-cffb-446f-b282-151a93137957" />
+
